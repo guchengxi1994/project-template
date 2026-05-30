@@ -1,0 +1,106 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: project-template-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-template_db}
+      MYSQL_USER: ${MYSQL_USER:-template_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-template_pass}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d
+    command: >
+      --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci --init-connect='SET NAMES utf8mb4'
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nacos:
+    image: qingpan/rnacos:v0.7.4
+    container_name: project-template-nacos
+    restart: unless-stopped
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+      - "10848:10848"
+    environment:
+      MODE: standalone
+      PREFER_HOST_MODE: hostname
+    volumes:
+      - ./nacos/data:/home/nacos/data
+      - ./nacos/logs:/home/nacos/logs
+
+  nacos-template-init:
+    image: curlimages/curl:8.5.0
+    container_name: project-template-nacos-init
+    depends_on:
+      - nacos
+    env_file:
+      - ./.env
+    volumes:
+      - ./nacos/init-template-config.sh:/init-config.sh
+      - ./nacos/template-config.yaml:/config/template-config.yaml
+    environment:
+      NACOS_HOST: nacos
+      NACOS_PORT: 8848
+      DATA_ID: TEMPLATE_CONFIG
+      GROUP: TEMPLATE
+      CONFIG_FILE: /config/template-config.yaml
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "waiting nacos...";
+        until curl -s http://nacos:8848; do sleep 3; done;
+        sh /init-config.sh
+
+  backend:
+    image: project-template-backend:latest
+    container_name: project-template-backend
+    restart: unless-stopped
+    build:
+      context: ./backend
+    env_file:
+      - ./.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_started
+      nacos-template-init:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      NACOS_DATA_ID: TEMPLATE_CONFIG
+      NACOS_GROUP: TEMPLATE
+      APP_DEBUG: "false"
+      LOG_LEVEL: INFO
+      LOG_DIR: /app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    image: project-template-frontend:latest
+    container_name: project-template-frontend
+    restart: unless-stopped
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "12345:80"
+
+volumes:
+  mysql_data:
