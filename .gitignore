@@ -1,0 +1,9 @@
+.env
+
+*.tar
+*.zip
+/minio/**
+.DS_Store
+.vscode/**
+.idea/**
+tpl.md
